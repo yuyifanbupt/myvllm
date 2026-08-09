@@ -1,0 +1,24 @@
+[project]
+name = "myvllm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "yuyifan", email = "yuyifanbupt@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "einops>=0.8.2",
+    "ipython>=9.16.1",
+    "torch>=2.13.0",
+]
+
+[project.scripts]
+myvllm = "myvllm:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
