@@ -1,7 +1,7 @@
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from torch import load, nn
+from torch import nn
 
 
 class Linear(nn.Module):
