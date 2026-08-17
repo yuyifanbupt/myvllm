@@ -3,7 +3,7 @@ import triton
 import triton.language as tl
 
 
-@triton.jit()
+@triton.jit
 def _causal_conv1d_fwd_kernel(
     x_ptr,  # (total_tokens, dim)
     stride_x_token,
@@ -274,7 +274,7 @@ def causal_conv1d_fn(
 
 
 # for decode
-@triton.jit()
+@triton.jit
 def _causal_conv1d_update_kernel(
     x_ptr,  # (seq_cnt, dim)
     stride_x_seq,
