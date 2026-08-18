@@ -51,7 +51,7 @@ def _chunk_scaled_dot_kkt_kernel(
 
     for i in range(tl.cdiv(k_head_dim, BLOCK_K)):
         k_block = tl.load(k_block_ptr, boundary_check=(0, 1), padding_option="zero")
-        tl.advance(k_block_ptr, (0, 1))
+        k_block_ptr = tl.advance(k_block_ptr, (0, 1))
         a_block += tl.dot(k_block, tl.trans(k_block))
 
     g_block_ptr = tl.make_block_ptr(
@@ -110,9 +110,8 @@ def chunk_scaled_dotkkt(
     A = torch.empty(total_tokens, num_v_heads, chunk_size, device=k.device, dtype=torch.float32)
     stride_A_token, stride_A_head, stride_A_chunk = A.stride()
     _, num_k_heads, k_head_dim = k.shape
-    num_v_heads = g.size(1)
     chunk_cnt = chunk_indices.size(0)
-    grid = (chunk_cnt, chunk_size)
+    grid = (chunk_cnt, num_v_heads)
     BLOCK_K = 16
 
     _chunk_scaled_dot_kkt_kernel[grid](
