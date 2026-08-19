@@ -112,7 +112,7 @@ def chunk_scaled_dotkkt(
     _, num_k_heads, k_head_dim = k.shape
     chunk_cnt = chunk_indices.size(0)
     grid = (chunk_cnt, num_v_heads)
-    BLOCK_K = 16
+    BLOCK_K = 32
 
     _chunk_scaled_dot_kkt_kernel[grid](
         k,
