@@ -4,15 +4,15 @@ import triton.language as tl
 
 
 @triton.jit
-def _chunk_compute_h_blockk64_kernel(
+def _chunk_compute_h_blockk32_kernel(
     k_ptr,  # (total_tokens, num_k_heads, k_head_dim)
     stride_k_token,
     stride_k_head,
     stride_k_dim,
-    v_ptr,  # (total_tokens, num_v_heads, v_head_dim)
-    stride_v_token,
-    stride_v_head,
-    stride_v_dim,
+    u_ptr,  # (total_tokens, num_v_heads, v_head_dim)
+    stride_u_token,
+    stride_u_head,
+    stride_u_dim,
     w_ptr,  # (total_tokens, num_v_heads, k_head_dim),
     stride_w_token,
     stride_w_head,
@@ -25,15 +25,16 @@ def _chunk_compute_h_blockk64_kernel(
     stride_h_head,
     stride_h_k_dim,
     stride_h_v_dim,
-    ht_ptr,  # (seq_cnt, num_v_heads, k_head_dim, v_head_dim)
-    stride_ht_seq,
-    stride_ht_head,
-    stride_ht_k_dim,
-    stride_ht_v_dim,
     v_new_ptr,  # (total_tokens, num_v_heads, v_head_dim)
     stride_v_new_token,
     stride_v_new_head,
     stride_v_new_dim,
+    recurrent_state_ptr,  # (max_seq_cnt, num_v_heads, k_head_dim, v_head_dim)
+    stride_state_seq,
+    stride_state_head,
+    stride_state_k_dim,
+    stride_state_v_dim,
+    recurrent_state_indices_ptr,  # (seq_cnt, )
     cu_seqlens_ptr,  # (seq_cnt + 1, )
     cu_chunk_cnts_ptr,  # (seq_cnt + 1, )
     num_k_heads: tl.constexpr,
@@ -43,7 +44,7 @@ def _chunk_compute_h_blockk64_kernel(
     BLOCK_V: tl.constexpr,
     CHUNK_SIZE: tl.constexpr,
 ):
-    BLOCK_K: tl.constexpr = 64  # # pyright: ignore[reportAssignmentType]
+    BLOCK_K: tl.constexpr = 32  # # pyright: ignore[reportAssignmentType]
     seq_idx = tl.program_id(0)
     v_head_idx = tl.program_id(1)
     block_v_idx = tl.program_id(2)
@@ -55,13 +56,14 @@ def _chunk_compute_h_blockk64_kernel(
     chunk_start_idx = tl.load(cu_chunk_cnts_ptr + seq_idx)
     chunk_end_idx = tl.load(cu_chunk_cnts_ptr + seq_idx + 1)
     seq_chunk_cnt = chunk_end_idx - chunk_start_idx
+    recurrent_state_idx = tl.load(recurrent_state_indices_ptr + seq_idx)
 
     h_block1 = tl.zeros([1, BLOCK_K, BLOCK_V], dtype=tl.float32)
-    if k_head_dim > 64:
+    if k_head_dim > BLOCK_K:
         h_block2 = tl.zeros([1, BLOCK_K, BLOCK_V], dtype=tl.float32)
-    if k_head_dim > 128:
+    if k_head_dim > 2 * BLOCK_K:
         h_block3 = tl.zeros([1, BLOCK_K, BLOCK_V], dtype=tl.float32)
-    if k_head_dim > 192:
+    if k_head_dim > 3 * BLOCK_K:
         h_block4 = tl.zeros([1, BLOCK_K, BLOCK_V], dtype=tl.float32)
 
     h_block_ptr = tl.make_block_ptr(
@@ -81,9 +83,9 @@ def _chunk_compute_h_blockk64_kernel(
         order=(1, 0),
     )
     v_block_ptr = tl.make_block_ptr(
-        v_ptr + seq_token_start * stride_v_token + v_head_idx * stride_v_head,
+        u_ptr + seq_token_start * stride_u_token + v_head_idx * stride_u_head,
         shape=(seqlen, v_head_dim),
-        strides=(stride_v_token, stride_v_dim),
+        strides=(stride_u_token, stride_u_dim),
         offsets=(0, block_v_idx * BLOCK_V),
         block_shape=(CHUNK_SIZE, BLOCK_V),
         order=(1, 0),
@@ -116,23 +118,23 @@ def _chunk_compute_h_blockk64_kernel(
     for i in range(seq_chunk_cnt):
         token_mask = tl.arange(0, CHUNK_SIZE) + i * CHUNK_SIZE < seqlen
         tl.store(h_block_ptr, h_block1, boundary_check=(1, 2))
-        if k_head_dim > 64:
+        if k_head_dim > BLOCK_K:
             tl.store(tl.advance(h_block_ptr, (0, BLOCK_K, 0)), h_block2, boundary_check=(1, 2))
-        if k_head_dim > 128:
+        if k_head_dim > 2 * BLOCK_K:
             tl.store(tl.advance(h_block_ptr, (0, 2 * BLOCK_K, 0)), h_block3, boundary_check=(1, 2))
-        if k_head_dim > 192:
+        if k_head_dim > 3 * BLOCK_K:
             tl.store(tl.advance(h_block_ptr, (0, 3 * BLOCK_K, 0)), h_block4, boundary_check=(1, 2))
         h_block_ptr = tl.advance(h_block_ptr, (1, 0, 0))
 
         w_block = tl.load(w_block_ptr, boundary_check=(0, 1), padding_option="zero")
         v_new_block = tl.dot(w_block[None, :, :], h_block1.to(w_block.dtype))
-        if k_head_dim > 64:
+        if k_head_dim > BLOCK_K:
             w_block = tl.load(tl.advance(w_block_ptr, (0, BLOCK_K)), boundary_check=(0, 1), padding_option="zero")
             v_new_block += tl.dot(w_block[None, :, :], h_block2.to(w_block.dtype))
-        if k_head_dim > 128:
+        if k_head_dim > 2 * BLOCK_K:
             w_block = tl.load(tl.advance(w_block_ptr, (0, 2 * BLOCK_K)), boundary_check=(0, 1), padding_option="zero")
             v_new_block += tl.dot(w_block[None, :, :], h_block3.to(w_block.dtype))
-        if k_head_dim > 192:
+        if k_head_dim > 3 * BLOCK_K:
             w_block = tl.load(tl.advance(w_block_ptr, (0, 3 * BLOCK_K)), boundary_check=(0, 1), padding_option="zero")
             v_new_block += tl.dot(w_block[None, :, :], h_block4.to(w_block.dtype))
         w_block_ptr = tl.advance(w_block_ptr, (CHUNK_SIZE, 0))
@@ -150,81 +152,84 @@ def _chunk_compute_h_blockk64_kernel(
         v_new_block = v_new_block * tl.where(token_mask, tl.math.exp2(g_last - g_block), 0)[:, None]
         g_last = tl.math.exp2(g_last)
         h_block1 *= g_last
-        if k_head_dim > 64:
+        if k_head_dim > BLOCK_K:
             h_block2 *= g_last
-        if k_head_dim > 128:
+        if k_head_dim > 2 * BLOCK_K:
             h_block3 *= g_last
-        if k_head_dim > 192:
+        if k_head_dim > 3 * BLOCK_K:
             h_block4 *= g_last
 
         v_new_block = v_new_block.to(k_ptr.dtype.element_ty)
 
         k_block1 = tl.load(k_block_ptr, boundary_check=(0, 1), padding_option="zero")
         h_block1 += tl.dot(tl.trans(k_block1), v_new_block)
-        if k_head_dim > 64:
+        if k_head_dim > BLOCK_K:
             k_block2 = tl.load(tl.advance(k_block_ptr, (0, BLOCK_K)), boundary_check=(0, 1), padding_option="zero")
             h_block2 += tl.dot(tl.trans(k_block2), v_new_block)
-        if k_head_dim > 128:
+        if k_head_dim > 2 * BLOCK_K:
             k_block3 = tl.load(tl.advance(k_block_ptr, (0, 2 * BLOCK_K)), boundary_check=(0, 1), padding_option="zero")
             h_block3 += tl.dot(tl.trans(k_block3), v_new_block)
-        if k_head_dim > 192:
+        if k_head_dim > 3 * BLOCK_K:
             k_block4 = tl.load(tl.advance(k_block_ptr, (0, 3 * BLOCK_K)), boundary_check=(0, 1), padding_option="zero")
             h_block4 += tl.dot(tl.trans(k_block4), v_new_block)
         k_block_ptr = tl.advance(k_block_ptr, (CHUNK_SIZE, 0))
 
     # store final state
-    ht_block_ptr = tl.make_block_ptr(
-        ht_ptr + seq_idx * stride_ht_seq + v_head_idx * stride_ht_head,
+    state_block_ptr = tl.make_block_ptr(
+        recurrent_state_ptr + recurrent_state_idx * stride_state_seq + v_head_idx * stride_state_head,
         shape=(k_head_dim, v_head_dim),
-        strides=(stride_ht_k_dim, stride_ht_v_dim),
+        strides=(stride_state_k_dim, stride_state_v_dim),
         offsets=(0, block_v_idx * BLOCK_V),
         block_shape=(BLOCK_K, BLOCK_V),
         order=(1, 0),
     )
-    tl.store(ht_block_ptr, h_block1, boundary_check=(0, 1))
-    if k_head_dim > 64:
-        tl.store(tl.advance(ht_block_ptr, (BLOCK_K, 0)), h_block2)
-    if k_head_dim > 128:
-        tl.store(tl.advance(ht_block_ptr, (2 * BLOCK_K, 0)), h_block3)
-    if k_head_dim > 192:
-        tl.store(tl.advance(ht_block_ptr, (3 * BLOCK_K, 0)), h_block4)
+    tl.store(state_block_ptr, h_block1, boundary_check=(0, 1))
+    if k_head_dim > BLOCK_K:
+        tl.store(tl.advance(state_block_ptr, (BLOCK_K, 0)), h_block2, boundary_check=(0, 1))
+    if k_head_dim > 2 * BLOCK_K:
+        tl.store(tl.advance(state_block_ptr, (2 * BLOCK_K, 0)), h_block3, boundary_check=(0, 1))
+    if k_head_dim > 3 * BLOCK_K:
+        tl.store(tl.advance(state_block_ptr, (3 * BLOCK_K, 0)), h_block4, boundary_check=(0, 1))
 
 
 def chunk_compute_h(
     k: torch.Tensor,  # (total_tokens, num_k_heads, k_head_dim)
     w: torch.Tensor,  # (total_tokens, num_v_heads, k_head_dim)
-    v: torch.Tensor,  # (total_tokens, num_v_heads, v_head_dim)
+    u: torch.Tensor,  # (total_tokens, num_v_heads, v_head_dim)
     g: torch.Tensor,  # (total_tokens, num_v_heads)
+    recurrent_state: torch.Tensor,  # (max_seq_cnt, num_v_heads, k_head_dim, v_head_dim)
+    recurrent_state_indices: torch.Tensor,  # (seq_cnt, )
     cu_seqlens: torch.Tensor,  # (seq_cnt+1, )
     cu_chunk_cnts: torch.Tensor,  # (seq_cnt+1, )
     chunk_cnt: int,
-    chunk_size: int = 64,  # TODO: 这里的 chunk_size 可能跟前面的对不齐，想想咋办
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    chunk_size: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
     _, num_k_heads, k_head_dim = k.shape
-    _, num_v_heads, v_head_dim = v.shape
+    _, num_v_heads, v_head_dim = u.shape
     seq_cnt = cu_seqlens.size(0) - 1
-    BLOCK_V = 64
+    BLOCK_V = 32
+    assert k_head_dim <= 128, "_chunk_compute_h_blockk32_kernel requires k_head_dim <= 128"
+
     h = torch.zeros(chunk_cnt, num_v_heads, k_head_dim, v_head_dim, dtype=k.dtype, device=k.device)
-    ht = torch.zeros(seq_cnt, num_v_heads, k_head_dim, v_head_dim, dtype=k.dtype, device=k.device)
-    v_new = torch.zeros_like(v)
+    v_new = torch.zeros_like(u)
     stride_k_token, stride_k_head, stride_k_dim = k.stride()
-    stride_v_token, stride_v_head, stride_v_dim = v.stride()
+    stride_u_token, stride_u_head, stride_u_dim = u.stride()
     stride_w_token, stride_w_head, stride_w_dim = w.stride()
     stride_g_token, stride_g_head = g.stride()
     stride_h_chunk, stride_h_head, stride_h_k_dim, stride_h_v_dim = h.stride()
-    stride_ht_chunk, stride_ht_head, stride_ht_k_dim, stride_ht_v_dim = ht.stride()
     stride_v_new_token, stride_v_new_head, stride_v_new_dim = v_new.stride()
+    stride_state_seq, stride_state_head, stride_state_k_dim, stride_state_v_dim = recurrent_state.stride()
     grid = (seq_cnt, num_v_heads, tl.cdiv(v_head_dim, BLOCK_V))
 
-    _chunk_compute_h_blockk64_kernel[grid](
+    _chunk_compute_h_blockk32_kernel[grid](
         k,
         stride_k_token,
         stride_k_head,
         stride_k_dim,
-        v,
-        stride_v_token,
-        stride_v_head,
-        stride_v_dim,
+        u,
+        stride_u_token,
+        stride_u_head,
+        stride_u_dim,
         w,
         stride_w_token,
         stride_w_head,
@@ -237,15 +242,16 @@ def chunk_compute_h(
         stride_h_head,
         stride_h_k_dim,
         stride_h_v_dim,
-        ht,
-        stride_ht_chunk,
-        stride_ht_head,
-        stride_ht_k_dim,
-        stride_ht_v_dim,
         v_new,
         stride_v_new_token,
         stride_v_new_head,
         stride_v_new_dim,
+        recurrent_state,
+        stride_state_seq,
+        stride_state_head,
+        stride_state_k_dim,
+        stride_state_v_dim,
+        recurrent_state_indices,
         cu_seqlens,
         cu_chunk_cnts,
         num_k_heads,
@@ -256,4 +262,4 @@ def chunk_compute_h(
         chunk_size,
     )
 
-    return h, v_new, ht
+    return h, v_new

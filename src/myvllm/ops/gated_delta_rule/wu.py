@@ -146,7 +146,7 @@ def gdn_compute_w_u(
     _, num_v_heads, v_head_dim = v.shape
     chunk_size = A.shape[-1]
     chunk_cnt = chunk_indices.size(0)
-    BLOCK_K, BLOCK_V = 32, 32  # TODO: 研究下这个值怎么设
+    BLOCK_K, BLOCK_V = 32, 32
     w = torch.zeros(total_tokens, num_v_heads, k_head_dim, dtype=k.dtype, device=k.device)
     u = torch.zeros_like(v)
     grid = (chunk_cnt, num_v_heads)

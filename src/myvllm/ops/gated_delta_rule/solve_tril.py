@@ -77,7 +77,7 @@ def solve_tril(
     A: torch.Tensor,  # (total_tokens, num_v_heads, chunk_size)
     cu_seqlens: torch.Tensor,  # (seq_cnt+1, )
     chunk_indices: torch.Tensor,  # (chunk_cnt, 2)
-):
+) -> torch.Tensor:
     """
     Compute the inverse of the matrix I + A
     A should be strictly lower triangular, i.e., A.triu() == 0.
@@ -116,3 +116,5 @@ def solve_tril(
         chunk_indices,
         chunk_size,  # pyright: ignore[reportArgumentType]
     )
+
+    return Ai

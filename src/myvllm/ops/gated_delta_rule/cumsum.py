@@ -3,8 +3,7 @@ import triton
 import triton.language as tl
 
 
-# TODO: 明天再看看 g_interleaved 和 g 有什么区别
-@triton.jit()
+@triton.jit
 def _chunk_local_cumsum_kernel(
     g_ptr,  # (total_tokens, num_v_heads),
     stride_g_token,

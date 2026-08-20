@@ -39,7 +39,7 @@ class LinearAttentionCache:
             num_k_heads,
             k_head_dim,
             v_head_dim,
-            dtype=torch.float32,
+            dtype=dtype,
             device=device,
         )
         self.free_slot_ids: deque[int] = deque(range(max_seq_cnt))
@@ -61,7 +61,7 @@ class LinearAttentionCache:
             * (2 * k_head_dim * num_k_heads + v_head_dim * num_v_heads)
             * dtype.itemsize
         )
-        recurrent_cache_size = layer_cnt * num_k_heads * k_head_dim * v_head_dim * torch.float32.itemsize
+        recurrent_cache_size = layer_cnt * num_k_heads * k_head_dim * v_head_dim * dtype.itemsize
 
         return conv_cache_size + recurrent_cache_size
 
