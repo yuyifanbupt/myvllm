@@ -1,5 +1,6 @@
 import torch
-from torch import nn
+import torch.nn.functional as F
+from torch import nn, var
 
 
 class RMSNorm(nn.Module):
@@ -38,6 +39,23 @@ class RMSNorm(nn.Module):
             return self.residual_rms_forward(x, residual)
         else:
             return self.rms_forward(x), x
+
+
+class RMSNormGated(nn.Module):
+    def __init__(self, normalized_shape: tuple[int, ...], eps: float = 1e-6) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(normalized_shape))
+        self.variance_epsilon = eps
+
+    @torch.compile
+    def forward(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+        weight = self.weight.to(torch.float32)
+        input_dtype = x.dtype
+        x = x.to(torch.float32)
+        variance = x.pow(2).mean(dim=-1, keepdim=True) + self.variance_epsilon
+        x = x * variance.rsqrt() * weight * F.silu(gate.to(torch.float32))
+
+        return x.to(input_dtype)
 
 
 class LayerNorm(nn.Module):

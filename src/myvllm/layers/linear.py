@@ -51,48 +51,85 @@ class ColumnParallelLinear(Linear):
         param_data.copy_(loaded_weights)
 
 
+class GatedQParallelLinear(ColumnParallelLinear):
+    def __init__(self, hidden_size: int, head_dim: int, total_num_heads: int, bias: bool = False):
+        self.hidden_size = hidden_size
+        self.head_dim = head_dim
+        self.total_num_heads = total_num_heads
+
+        tp_size = dist.get_world_size()
+        assert self.total_num_heads % tp_size == 0
+
+        self.num_heads = self.total_num_heads // tp_size
+        output_size = self.total_num_heads * self.head_dim * 2  # 2 for gate
+
+        super().__init__(input_size=self.hidden_size, output_size=output_size, bias=bias)
+
+    def weight_loader(self, param: nn.Parameter, loaded_weights: torch.Tensor):
+        param_data = param.data
+        shard_size = self.num_heads * self.head_dim
+        loaded_weight_q_offset = self.tp_rank * shard_size
+        loaded_weight_gate_offset = self.total_num_heads * self.head_dim + self.tp_rank * shard_size
+        loaded_weight_q = loaded_weights.narrow(0, loaded_weight_q_offset, shard_size)
+        loaded_weight_gate = loaded_weights.narrow(0, loaded_weight_gate_offset, shard_size)
+
+        param_data_q_offset = 0
+        param_data_gate_offset = shard_size
+        param_data_q = param_data.narrow(0, param_data_q_offset, shard_size)
+        param_data_gate = param_data.narrow(0, param_data_gate_offset, shard_size)
+
+        param_data_q.copy_(loaded_weight_q)
+        param_data_gate.copy_(loaded_weight_gate)
+
+
 class QKVParallelLinear(ColumnParallelLinear):
     def __init__(
         self,
         hidden_size: int,
-        head_size: int,
-        total_num_heads: int,
-        total_num_kv_heads: int | None = None,
+        q_head_dim: int,
+        k_head_dim: int,
+        v_head_dim: int,
+        total_num_q_heads: int,
+        total_num_k_heads: int,
+        total_num_v_heads: int,
         bias: bool = False,
         params_dtype: torch.dtype | None = None,
-        v_head_size: int | None = None,
     ):
         self.hidden_size = hidden_size
-        self.head_size = head_size
-        self.v_head_size = v_head_size if v_head_size is not None else head_size
-        self.total_num_heads = total_num_heads
-        self.total_num_kv_heads = total_num_kv_heads if total_num_kv_heads is not None else total_num_heads
+        self.q_head_dim = q_head_dim
+        self.k_head_dim = k_head_dim
+        self.v_head_dim = v_head_dim
+        self.total_num_q_heads = total_num_q_heads
+        self.total_num_k_heads = total_num_k_heads
+        self.total_num_v_heads = total_num_v_heads
 
         tp_size = dist.get_world_size()
-        assert self.total_num_heads % tp_size == 0
-        assert self.total_num_kv_heads % tp_size == 0
+        assert self.total_num_q_heads % tp_size == 0
+        assert self.total_num_k_heads % tp_size == 0
+        assert self.total_num_v_heads % tp_size == 0
 
-        self.num_heads = self.total_num_heads // tp_size
-        self.num_kv_heads = self.total_num_kv_heads // tp_size  # TODO: 这里需要想想 tp_size > total_num_kv_heads 怎么办
+        self.num_q_heads = self.total_num_q_heads // tp_size
+        self.num_k_heads = self.total_num_k_heads // tp_size
+        self.num_v_heads = self.total_num_v_heads // tp_size
         output_size = (
-            self.head_size * self.total_num_heads
-            + self.head_size * self.total_num_kv_heads
-            + self.v_head_size * self.total_num_kv_heads
+            self.q_head_dim * self.total_num_q_heads
+            + self.k_head_dim * self.total_num_k_heads
+            + self.v_head_dim * self.total_num_v_heads
         )
 
         super().__init__(input_size=hidden_size, output_size=output_size, bias=bias)
 
     def weight_loader(self, param: nn.Parameter, loaded_weights: torch.Tensor):
         param_data = param.data
-        q_shard_size = self.head_size * self.num_heads
-        k_shard_size = self.head_size * self.num_kv_heads
-        v_shard_size = self.v_head_size * self.num_kv_heads
+        q_shard_size = self.q_head_dim * self.num_q_heads
+        k_shard_size = self.k_head_dim * self.num_k_heads
+        v_shard_size = self.v_head_dim * self.num_v_heads
         q_shard_offset = 0
         k_shard_offset = q_shard_size
         v_shard_offset = q_shard_size + k_shard_size
 
-        q_total_size = self.head_size * self.total_num_heads
-        k_total_size = self.head_size * self.total_num_kv_heads
+        q_total_size = self.q_head_dim * self.total_num_q_heads
+        k_total_size = self.k_head_dim * self.total_num_k_heads
         q_loaded_weights_offset = 0 + self.tp_rank * q_shard_size
         k_loaded_weights_offset = q_total_size + self.tp_rank * k_shard_size
         v_loaded_weights_offset = q_total_size + k_total_size + self.tp_rank * v_shard_size
