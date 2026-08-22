@@ -3,6 +3,7 @@ from collections import deque
 import torch
 
 
+# TODO: 想下这里要改成支持 paged cache
 class LinearAttentionCache:
     def __init__(
         self,

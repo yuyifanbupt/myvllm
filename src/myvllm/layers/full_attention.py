@@ -4,6 +4,7 @@ from torch import nn
 
 from myvllm.layers.linear import ColumnParallelLinear, GatedQParallelLinear
 from myvllm.layers.norm import RMSNorm
+from myvllm.layers.rotary_embedding import apply_rotary_pos_emb
 
 
 class GatedAttention(nn.Module):
@@ -43,7 +44,21 @@ class GatedAttention(nn.Module):
             self.hidden_size, self.total_num_kv_heads * self.v_head_dim, bias=self.attention_bias
         )
         self.q_norm = RMSNorm((self.qk_head_dim,), self.rms_norm_eps, True)
-        self.k_nrom = RMSNorm((self.v_head_dim,), self.rms_norm_eps, True)
+        self.k_nrom = RMSNorm((self.qk_head_dim,), self.rms_norm_eps, True)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        rotary_pos_emb_cos: torch.Tensor | None,
+        rotary_pos_emb_sin: torch.Tensor | None,
+    ) -> torch.Tensor:
+        total_tokens = x.size(0)
+        q, g = torch.chunk(self.q_proj(x).view(total_tokens, self.total_num_q_heads, self.qk_head_dim * 2), 2, dim=-1)
+        q = self.q_norm(q)
+        k = self.k_nrom(self.k_proj(x))
+
+        if rotary_pos_emb_cos is not None and rotary_pos_emb_sin is not None:
+            q = apply_rotary_pos_emb(q, rotary_pos_emb_cos, rotary_pos_emb_sin)
+            k = apply_rotary_pos_emb(k, rotary_pos_emb_cos, rotary_pos_emb_sin)
+
         return torch.empty(0)

@@ -1,3 +1,4 @@
+# TODO: 想下这里要怎么支持 paged cache
 import torch
 
 from myvllm.ops.gated_delta_rule.chunk_scaled_dot_kkt import chunk_scaled_dotkkt
@@ -40,8 +41,6 @@ def chunk_gated_delta_rule(
     """
     for prefill stage
     """
-    # TODO: 这里要对q, k 做 l2norm, 不放到这里做了，直接在外面做再传进来吧.
-
     CHUNK_SIZE = 32
     chunk_indices, cu_chunk_cnts = prepare_chunk_indices(cu_seqlens, CHUNK_SIZE)
     scale = k.shape[-1] ** -0.5
@@ -80,7 +79,6 @@ def recurrent_gated_delta_rule(
     For decode stage.
     One token for each seq.
     """
-    # TODO: 这里要对q, k 做 l2norm, 不放到这里做了，直接在外面做再传进来吧.
     o = fused_recurrent_gdn(
         q,
         k,
